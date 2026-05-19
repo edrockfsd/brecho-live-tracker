@@ -1,0 +1,15 @@
+{
+  "name": "brecho-live-tracker",
+  "version": "1.0.0",
+  "description": "Rastreador de vendas ao vivo para brechó via Instagram Live + Social Stream Ninja",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "googleapis": "^144.0.0",
+    "ws": "^8.18.0"
+  }
+}

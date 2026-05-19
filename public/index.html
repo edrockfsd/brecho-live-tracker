@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Brechó Live Tracker</title>
+  <meta name="description" content="Rastreador de vendas ao vivo para brechó via Instagram Live">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- ─── Top Bar ──────────────────────────────────── -->
+  <header id="topbar">
+    <div class="topbar-left">
+      <div class="logo">
+        <span class="logo-icon">🛍️</span>
+        <h1>Brechó Live Tracker</h1>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="status-indicators">
+        <div class="status-badge" id="ssnStatusBadge">
+          <span class="status-dot disconnected"></span>
+          <span class="status-label">SSN</span>
+        </div>
+        <div class="status-badge" id="sheetsStatusBadge">
+          <span class="status-dot disconnected"></span>
+          <span class="status-label">Sheets</span>
+        </div>
+      </div>
+      <button class="btn btn-icon" id="btnToggleConfig" title="Configurações">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ─── Config Panel (collapsible) ───────────────── -->
+  <section id="configPanel" class="config-panel collapsed">
+    <div class="config-grid">
+      <!-- SSN Config -->
+      <div class="config-card">
+        <h3>📡 Social Stream Ninja</h3>
+        <div class="form-group">
+          <label for="ssnSessionId">Session ID</label>
+          <div class="input-row">
+            <input type="text" id="ssnSessionId" placeholder="Cole seu Session ID aqui..." autocomplete="off">
+            <button class="btn btn-primary" id="btnConnectSSN">Conectar</button>
+          </div>
+          <p class="hint">Encontre na URL do dock.html: <code>?session=SEU_ID</code></p>
+        </div>
+      </div>
+
+      <!-- Google Sheets Config -->
+      <div class="config-card">
+        <h3>📊 Google Sheets</h3>
+        <div class="form-group">
+          <label for="sheetsUrl">Link da Planilha</label>
+          <input type="text" id="sheetsUrl" placeholder="https://docs.google.com/spreadsheets/d/..." autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label for="credentialsPath">Caminho do arquivo de credenciais (JSON)</label>
+          <div class="input-row">
+            <input type="text" id="credentialsPath" placeholder="credentials/service-account.json" value="credentials/service-account.json">
+            <button class="btn btn-primary" id="btnConnectSheets">Conectar</button>
+          </div>
+          <p class="hint">Coloque o arquivo JSON na pasta <code>credentials/</code></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Setup Guide -->
+    <details class="setup-guide">
+      <summary>📘 Guia de configuração do Google Sheets (primeira vez)</summary>
+      <div class="guide-content">
+        <ol>
+          <li>Acesse o <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a></li>
+          <li>Crie um novo projeto (ou use um existente)</li>
+          <li>Ative a <strong>Google Sheets API</strong> em "APIs & Services > Library"</li>
+          <li>Vá em "APIs & Services > Credentials" e crie uma <strong>Service Account</strong></li>
+          <li>Na Service Account, crie uma <strong>Key</strong> do tipo JSON e baixe o arquivo</li>
+          <li>Coloque o arquivo JSON na pasta <code>credentials/</code> com o nome <code>service-account.json</code></li>
+          <li>Copie o email da Service Account (ex: <code>nome@projeto.iam.gserviceaccount.com</code>)</li>
+          <li>Na sua planilha Google Sheets, clique em <strong>"Compartilhar"</strong> e adicione o email da Service Account como <strong>Editor</strong></li>
+        </ol>
+        <p>⚠️ <strong>Repita o passo 8 a cada nova planilha que criar para as lives!</strong></p>
+      </div>
+    </details>
+  </section>
+
+  <!-- ─── Main Content ─────────────────────────────── -->
+  <main id="mainContent">
+    <!-- Left: Piece Control + Results -->
+    <div class="main-left">
+      <!-- Piece Input Panel -->
+      <section class="piece-panel card">
+        <div class="active-code-display" id="activeCodeDisplay">
+          <span class="active-code-label">AGUARDANDO CÓDIGO</span>
+          <span class="active-code-value" id="activeCodeValue">---</span>
+        </div>
+
+        <div class="piece-form">
+          <div class="form-row-main">
+            <div class="form-group code-input-group">
+              <label for="inputCode">Código</label>
+              <input type="text" id="inputCode" placeholder="005" class="input-code" autocomplete="off">
+            </div>
+            <div class="form-group desc-input-group">
+              <label for="inputDescription">Descrição</label>
+              <input type="text" id="inputDescription" placeholder="columbia rosa" autocomplete="off">
+            </div>
+            <div class="form-group value-input-group">
+              <label for="inputValue">Valor (R$)</label>
+              <input type="text" id="inputValue" placeholder="299" autocomplete="off">
+            </div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-track" id="btnTrack">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              Rastrear
+            </button>
+            <button class="btn btn-stop" id="btnStop" disabled>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+              Parar
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Real-time Results -->
+      <section class="results-panel card" id="resultsPanel">
+        <h2 class="section-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Resultados
+        </h2>
+
+        <div class="results-empty" id="resultsEmpty">
+          <p>Nenhum código sendo rastreado</p>
+          <p class="hint">Digite um código e clique em "Rastrear" para começar</p>
+        </div>
+
+        <div class="results-list" id="resultsList" style="display:none;">
+          <!-- Buyer -->
+          <div class="result-buyer" id="resultBuyer" style="display:none;">
+            <div class="result-badge buyer">🏆 COMPRADOR</div>
+            <div class="result-nick" id="buyerNick">-</div>
+            <div class="result-time" id="buyerTime">-</div>
+            <button class="btn-remove" data-index="0" title="Remover">✕</button>
+          </div>
+
+          <!-- Queue items will be added here -->
+          <div class="queue-list" id="queueList"></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Right: Chat Monitor -->
+    <div class="main-right">
+      <section class="chat-panel card">
+        <div class="chat-header">
+          <h2 class="section-title">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            Chat ao vivo
+          </h2>
+          <span class="chat-count" id="chatCount">0</span>
+        </div>
+        <div class="chat-feed" id="chatFeed">
+          <div class="chat-empty">
+            <p>Conecte ao Social Stream Ninja para ver o chat</p>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- ─── History Table ────────────────────────────── -->
+  <section class="history-panel" id="historyPanel">
+    <div class="history-header">
+      <h2 class="section-title">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
+        Histórico da Live
+      </h2>
+      <div class="history-actions">
+        <span class="history-count" id="historyCount">0 peças</span>
+        <button class="btn btn-secondary" id="btnExportCSV" title="Exportar CSV">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          CSV
+        </button>
+        <button class="btn btn-secondary" id="btnCopyClipboard" title="Copiar para Clipboard">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          Copiar
+        </button>
+      </div>
+    </div>
+    <div class="history-table-wrapper">
+      <table class="history-table" id="historyTable">
+        <thead>
+          <tr>
+            <th>Código</th>
+            <th>Descrição</th>
+            <th>Valor</th>
+            <th>Comprador</th>
+            <th>Fila</th>
+            <th>Sheets</th>
+          </tr>
+        </thead>
+        <tbody id="historyTableBody">
+          <tr class="empty-row">
+            <td colspan="6">Nenhuma peça registrada ainda</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ─── Toast Container ──────────────────────────── -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- ─── Notification Sound ───────────────────────── -->
+  <div id="notificationSound"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
