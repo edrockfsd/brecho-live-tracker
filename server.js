@@ -26,6 +26,36 @@ let spreadsheetId = null;
 let sheetName = null;
 let credentialsPath = null;
 
+// Rolling buffer of recent chat messages (últimos 5 min, máx 300)
+const MESSAGE_BUFFER_MAX = 300;
+const MESSAGE_BUFFER_TTL_MS = 5 * 60 * 1000; // 5 minutos
+let messageBuffer = []; // [{ nick, message, timestamp, avatar }]
+
+function addToMessageBuffer(entry) {
+  const now = Date.now();
+  messageBuffer.push(entry);
+  // Remove mensagens mais antigas que 5 minutos
+  messageBuffer = messageBuffer.filter(m => now - m.timestamp < MESSAGE_BUFFER_TTL_MS);
+  // Limita ao máximo
+  if (messageBuffer.length > MESSAGE_BUFFER_MAX) {
+    messageBuffer = messageBuffer.slice(-MESSAGE_BUFFER_MAX);
+  }
+}
+
+// Varre o buffer em busca de matches retroativos para o código dado
+function findRetroactiveMatches(code) {
+  const matches = [];
+  const seenNicks = new Set();
+  // Percorre em ordem cronológica (mais antigo primeiro)
+  for (const entry of messageBuffer) {
+    if (entry.message === code && !seenNicks.has(entry.nick.toLowerCase())) {
+      seenNicks.add(entry.nick.toLowerCase());
+      matches.push(entry);
+    }
+  }
+  return matches;
+}
+
 // ─── Google Sheets ──────────────────────────────────────
 
 async function initGoogleSheets(credPath, sheetUrl) {
@@ -171,10 +201,16 @@ function columnLetter(index) {
 
 // ─── Social Stream Ninja WebSocket ──────────────────────
 
+let ssnPingInterval = null;
+
 function connectToSSN(sessionId) {
   if (ssnSocket) {
     ssnSocket.close();
     ssnSocket = null;
+  }
+  if (ssnPingInterval) {
+    clearInterval(ssnPingInterval);
+    ssnPingInterval = null;
   }
 
   ssnSessionId = sessionId;
@@ -186,18 +222,35 @@ function connectToSSN(sessionId) {
   ssnSocket.on('open', () => {
     console.log('✅ Conectado ao Social Stream Ninja (Canal 4)');
     broadcastToClients({ type: 'ssn_status', connected: true });
+
+    // Keepalive ping every 25 seconds to prevent idle disconnect
+    ssnPingInterval = setInterval(() => {
+      if (ssnSocket && ssnSocket.readyState === WebSocket.OPEN) {
+        ssnSocket.ping();
+      }
+    }, 25000);
   });
 
   ssnSocket.on('message', (rawData) => {
     try {
-      const data = JSON.parse(rawData.toString());
+      const raw = rawData.toString();
+      const data = JSON.parse(raw);
 
       // Only process actual chat messages
-      if (!data.chatname || data.chatmessage === undefined || data.chatmessage === null) return;
+      if (!data.chatname || data.chatmessage === undefined || data.chatmessage === null) {
+        // Log non-chat messages for debug
+        if (data.chatname === undefined) console.log('📨 SSN (não-chat):', raw.substring(0, 100));
+        return;
+      }
 
       const chatName = data.chatname;
       const chatMessage = (data.chatmessage || '').trim();
       const timestamp = Date.now();
+
+      // Armazena no buffer para possível match retroativo
+      addToMessageBuffer({ nick: chatName, message: chatMessage, timestamp, avatar: data.chatimg || null });
+
+      console.log(`💬 [${chatName}]: "${chatMessage}"`);
 
       // Forward to frontend chat monitor
       broadcastToClients({
@@ -242,8 +295,10 @@ function connectToSSN(sessionId) {
     }
   });
 
-  ssnSocket.on('close', () => {
-    console.log('❌ Desconectado do SSN');
+  ssnSocket.on('close', (code, reason) => {
+    clearInterval(ssnPingInterval);
+    ssnPingInterval = null;
+    console.log(`❌ Desconectado do SSN (code: ${code}, reason: ${reason.toString() || 'sem motivo'})`);
     broadcastToClients({ type: 'ssn_status', connected: false });
     // Reconnect after 3 seconds
     if (ssnSessionId) {
@@ -427,10 +482,32 @@ wss.on('connection', (ws) => {
 
           console.log(`🏷️ Rastreando código: "${activeCode}" - ${activePiece.description} R$${activePiece.value}`);
 
+          // ── Varredura retroativa no buffer de mensagens ──
+          const retroMatches = findRetroactiveMatches(activeCode);
+          if (retroMatches.length > 0) {
+            console.log(`⏪ ${retroMatches.length} match(es) retroativo(s) encontrado(s) no buffer para "${activeCode}"`);
+            for (const entry of retroMatches) {
+              currentMatches.push(entry);
+              const position = currentMatches.length;
+              console.log(`🎯 [Retroativo] ${entry.nick} → posição ${position}`);
+              broadcastToClients({
+                type: 'code_match',
+                nick: entry.nick,
+                position,
+                timestamp: entry.timestamp,
+                avatar: entry.avatar,
+                code: activeCode,
+                retroactive: true,
+              });
+            }
+            updateCurrentPieceInSheet();
+          }
+
           broadcastToClients({
             type: 'tracking_started',
             code: activeCode,
             piece: activePiece,
+            retroCount: retroMatches.length,
           });
           break;
         }

@@ -2,3 +2,7 @@ node_modules/
 credentials/*.json
 !credentials/.gitkeep
 .env
+
+# Build and archives
+*.exe
+*.rar
