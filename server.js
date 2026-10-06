@@ -42,6 +42,10 @@ function addToMessageBuffer(entry) {
   }
 }
 
+// Registro completo do chat (todas as mensagens desde que o app foi aberto),
+// usado para gerar o arquivo de chat da live
+let chatLog = []; // [{ nick, message, timestamp }]
+
 // Varre o buffer em busca de matches retroativos para o código dado
 function findRetroactiveMatches(code) {
   const matches = [];
@@ -250,6 +254,9 @@ function connectToSSN(sessionId) {
       // Armazena no buffer para possível match retroativo
       addToMessageBuffer({ nick: chatName, message: chatMessage, timestamp, avatar: data.chatimg || null });
 
+      // Armazena no registro completo do chat (para exportação)
+      chatLog.push({ nick: chatName, message: chatMessage, timestamp });
+
       console.log(`💬 [${chatName}]: "${chatMessage}"`);
 
       // Forward to frontend chat monitor
@@ -424,6 +431,7 @@ wss.on('connection', (ws) => {
     history,
     ssnSessionId,
     spreadsheetId,
+    chatCount: chatLog.length,
   }));
 
   ws.on('message', async (rawMsg) => {
@@ -551,6 +559,15 @@ wss.on('connection', (ws) => {
           break;
         }
 
+        case 'export_chat': {
+          ws.send(JSON.stringify({
+            type: 'chat_data',
+            text: generateChatLog(),
+            count: chatLog.length,
+          }));
+          break;
+        }
+
         default:
           console.warn('⚠️ Ação desconhecida:', msg.action);
       }
@@ -605,6 +622,52 @@ function generateCSV() {
   }
 
   return rows.join('\n');
+}
+
+// ─── Chat Export ─────────────────────────────────────────
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+function formatDate(d) {
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
+function formatTime(d) {
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+// Gera o texto com todo o chat registrado (uma mensagem por linha)
+function generateChatLog() {
+  const now = new Date();
+  const lines = [
+    'Brechó Live Tracker - Chat da live',
+    `Gerado em: ${formatDate(now)} ${formatTime(now)}`,
+  ];
+
+  if (chatLog.length > 0) {
+    const first = new Date(chatLog[0].timestamp);
+    const last = new Date(chatLog[chatLog.length - 1].timestamp);
+    lines.push(`Período: ${formatDate(first)} ${formatTime(first)} até ${formatDate(last)} ${formatTime(last)}`);
+  }
+  lines.push(`Total de mensagens: ${chatLog.length}`);
+  lines.push('------------------------------------------------------------');
+
+  let currentDay = null;
+  for (const entry of chatLog) {
+    const d = new Date(entry.timestamp);
+    const day = formatDate(d);
+    // Marca a virada de dia (lives que passam da meia-noite)
+    if (day !== currentDay) {
+      lines.push(`--- ${day} ---`);
+      currentDay = day;
+    }
+    const message = String(entry.message).replace(/\s*[\r\n]+\s*/g, ' ');
+    lines.push(`[${formatTime(d)}] ${entry.nick}: ${message}`);
+  }
+
+  return lines.join('\r\n') + '\r\n';
 }
 
 // ─── Start Server ───────────────────────────────────────

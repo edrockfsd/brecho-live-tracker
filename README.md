@@ -10,6 +10,7 @@ Durante lives de venda de roupas no Instagram, o sistema:
 - **Identifica** o primeiro a digitar (comprador) e monta a fila de espera
 - **Sincroniza em tempo real** com Google Sheets
 - **Match exato** — apenas mensagens com o código exato são aceitas (ignora "005 quero", etc.)
+- **Exporta o chat** — botão "Salvar chat" gera um `.txt` com todas as mensagens da live
 
 ## Requisitos
 

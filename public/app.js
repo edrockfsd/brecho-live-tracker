@@ -49,6 +49,7 @@ const els = {
   // Chat
   chatFeed: $('#chatFeed'),
   chatCount: $('#chatCount'),
+  btnExportChat: $('#btnExportChat'),
 
   // History
   historyTableBody: $('#historyTableBody'),
@@ -132,6 +133,10 @@ function handleMessage(data) {
     case 'csv_data':
       downloadCSV(data.csv);
       break;
+
+    case 'chat_data':
+      downloadChat(data.text, data.count);
+      break;
   }
 }
 
@@ -142,6 +147,10 @@ function handleInitState(data) {
   activeCode = data.activeCode;
   currentMatches = data.currentMatches || [];
   history = data.history || [];
+
+  // Total de mensagens já registradas no servidor (sobrevive ao recarregar a página)
+  chatMessageCount = data.chatCount || 0;
+  els.chatCount.textContent = chatMessageCount;
 
   // Restore session ID
   if (data.ssnSessionId) {
@@ -453,17 +462,17 @@ els.inputCode.addEventListener('keydown', (e) => {
   }
 });
 
-// Tab from code to description
+// Enter on description moves to value
 els.inputDescription.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     els.inputValue.focus();
   }
 });
 
-// Enter on value triggers track
+// Enter on value moves to code (last field)
 els.inputValue.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !isTracking) {
-    startTracking();
+  if (e.key === 'Enter') {
+    els.inputCode.focus();
   }
 });
 
@@ -490,6 +499,7 @@ function startTracking() {
     els.inputCode.value = '';
     els.inputDescription.value = '';
     els.inputValue.value = '';
+    els.inputDescription.focus();
   }, 100);
 }
 
@@ -505,6 +515,11 @@ document.addEventListener('click', (e) => {
 // Export CSV
 els.btnExportCSV.addEventListener('click', () => {
   send({ action: 'export_csv' });
+});
+
+// Export chat (arquivo com todo o chat da live)
+els.btnExportChat.addEventListener('click', () => {
+  send({ action: 'export_chat' });
 });
 
 // Copy to clipboard
@@ -563,6 +578,28 @@ function downloadCSV(csvContent) {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
   showToast('CSV exportado com sucesso!', 'success');
+}
+
+function downloadChat(text, count) {
+  if (!count) {
+    showToast('Nenhuma mensagem de chat registrada ainda', 'error');
+    return;
+  }
+
+  // BOM para o Bloco de Notas/Excel reconhecerem acentos e emojis (UTF-8)
+  const blob = new Blob(['\ufeff' + text], { type: 'text/plain;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const now = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  const stamp = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}_${p(now.getHours())}h${p(now.getMinutes())}`;
+  a.download = `chat_live_${stamp}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast(`Chat exportado: ${count} mensagens`, 'success');
 }
 
 function generateClipboardData() {

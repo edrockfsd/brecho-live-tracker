@@ -1,12 +1,13 @@
 {
   "name": "brecho-live-tracker",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Rastreador de vendas ao vivo para brechó via Instagram Live + Social Stream Ninja",
   "main": "server.js",
   "bin": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "build": "npx pkg@5.8.1 . --targets node18-win-x64 --output brecho-live-tracker.exe"
   },
   "dependencies": {
     "express": "^4.21.0",

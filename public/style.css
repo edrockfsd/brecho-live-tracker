@@ -527,7 +527,7 @@ body::before {
 
 .form-row-main {
   display: grid;
-  grid-template-columns: 120px 1fr 120px;
+  grid-template-columns: 1fr 120px 120px;
   gap: 0.8rem;
 }
 
@@ -663,6 +663,17 @@ body::before {
 
 .chat-header .section-title {
   margin-bottom: 0;
+}
+
+.chat-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-chat-export {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.75rem;
 }
 
 .chat-count {
