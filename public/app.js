@@ -111,6 +111,10 @@ function handleMessage(data) {
       handleSSNStatus(data);
       break;
 
+    case 'meta_captura':
+      handleMetaCaptura(data);
+      break;
+
     case 'meta_live':
       handleMetaLive(data);
       break;
@@ -181,6 +185,7 @@ function handleInitState(data) {
   if (connectedSource) setChatSource(connectedSource);
   updateConnectButtons();
   updateMetaLiveInfo(!!data.metaLive);
+  if (data.metaCaptura) handleMetaCaptura(data.metaCaptura);
 
   updateSSNStatusUI();
   updateSheetsStatusUI();
@@ -249,8 +254,29 @@ function handleMetaLive(data) {
   }
 }
 
+let metaLiveAtual = false;
+let metaCapturaAtual = null; // { ok, detalhe } vindo do servidor
+
 function updateMetaLiveInfo(live) {
-  els.metaLiveInfo.textContent = live ? '🔴 Live em andamento.' : 'Nenhuma live em andamento.';
+  metaLiveAtual = !!live;
+  renderMetaInfo();
+}
+
+function handleMetaCaptura(data) {
+  const antes = metaCapturaAtual && metaCapturaAtual.ok;
+  metaCapturaAtual = { ok: data.ok, detalhe: data.detalhe };
+  renderMetaInfo();
+  if (data.ok === false && antes !== false) {
+    showToast(`Atenção: ${data.detalhe}`, 'error');
+  }
+}
+
+function renderMetaInfo() {
+  let texto = metaLiveAtual ? '🔴 Live em andamento.' : 'Nenhuma live em andamento.';
+  if (metaCapturaAtual && metaCapturaAtual.ok === false) {
+    texto += ` ⚠️ ${metaCapturaAtual.detalhe}`;
+  }
+  els.metaLiveInfo.textContent = texto;
 }
 
 function updateSSNStatusUI() {

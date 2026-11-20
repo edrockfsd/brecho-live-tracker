@@ -409,6 +409,63 @@ async function connectToMeta(credPath) {
   setMetaConnected(true, { force: true });
 
   agendarPollMeta(0);
+  iniciarVerificacaoCaptura();
+}
+
+// ─── Status da captura na API (abrechozeiraApp) ─────────
+// A API roda no IIS da KingHost, que desliga o site depois de um tempo sem requisições.
+// Desligada, ela para de buscar os comentários na Meta. Enquanto a fonte Meta estiver
+// conectada, o Tracker chama esta rota a cada minuto: isso mantém a API acordada (ou a
+// acorda) e avisa na tela se a captura parou.
+const META_STATUS_URL = process.env.ABRECHOZEIRA_STATUS_URL || 'https://api.abrechozeira.com.br/api/status/captura';
+const META_STATUS_INTERVALO_MS = 60 * 1000;
+const META_CAPTURA_ATRASO_MAX_S = 45; // a captura roda a cada 1 s (live) ou 15 s (sem live)
+let metaStatusTimer = null;
+let metaCaptura = { ok: null, detalhe: 'Verificando a API...' };
+
+async function verificarCapturaApi() {
+  let estado;
+  const controle = new AbortController();
+  const limite = setTimeout(() => controle.abort(), 30000); // acordar a API pode levar alguns segundos
+  try {
+    const resp = await fetch(META_STATUS_URL, { signal: controle.signal });
+    if (resp.status === 404 || resp.status === 401) {
+      estado = { ok: null, detalhe: 'API acordada (versão sem a rota de status).' };
+    } else if (!resp.ok) {
+      estado = { ok: false, detalhe: `API respondeu com erro ${resp.status}.` };
+    } else {
+      const s = await resp.json();
+      const atraso = s.segundosDesdeUltimoCiclo;
+      estado = (atraso !== null && atraso !== undefined && atraso <= META_CAPTURA_ATRASO_MAX_S)
+        ? { ok: true, detalhe: 'Captura da API funcionando.' }
+        : { ok: false, detalhe: 'A API está no ar, mas a captura de comentários não está rodando.' };
+    }
+  } catch (err) {
+    estado = { ok: false, detalhe: 'A API não respondeu (tentando acordar).' };
+  } finally {
+    clearTimeout(limite);
+  }
+
+  if (!metaPool) return; // desconectou enquanto esperava
+  if (estado.ok !== metaCaptura.ok) {
+    console.log(estado.ok === false ? `⚠️ ${estado.detalhe}` : `🟢 ${estado.detalhe}`);
+  }
+  metaCaptura = estado;
+  broadcastToClients({ type: 'meta_captura', ...metaCaptura });
+}
+
+function iniciarVerificacaoCaptura() {
+  pararVerificacaoCaptura();
+  metaCaptura = { ok: null, detalhe: 'Verificando a API...' };
+  verificarCapturaApi();
+  metaStatusTimer = setInterval(verificarCapturaApi, META_STATUS_INTERVALO_MS);
+}
+
+function pararVerificacaoCaptura() {
+  if (metaStatusTimer) {
+    clearInterval(metaStatusTimer);
+    metaStatusTimer = null;
+  }
 }
 
 function agendarPollMeta(atraso) {
@@ -482,6 +539,7 @@ async function pollMeta() {
 }
 
 async function disconnectFromMeta() {
+  pararVerificacaoCaptura();
   if (metaTimer) {
     clearTimeout(metaTimer);
     metaTimer = null;
@@ -597,6 +655,7 @@ wss.on('connection', (ws) => {
     chatSource,
     metaCredentialsPath,
     metaLive: !!metaLiveVideoId,
+    metaCaptura: metaPool ? metaCaptura : null,
     sheetsConnected: !!sheetsClient,
     activeCode,
     activePiece,
