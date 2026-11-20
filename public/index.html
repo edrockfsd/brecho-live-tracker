@@ -23,7 +23,7 @@
       <div class="status-indicators">
         <div class="status-badge" id="ssnStatusBadge">
           <span class="status-dot disconnected"></span>
-          <span class="status-label">SSN</span>
+          <span class="status-label" id="chatSourceLabel">SSN</span>
         </div>
         <div class="status-badge" id="sheetsStatusBadge">
           <span class="status-dot disconnected"></span>
@@ -39,16 +39,36 @@
   <!-- ─── Config Panel (collapsible) ───────────────── -->
   <section id="configPanel" class="config-panel collapsed">
     <div class="config-grid">
-      <!-- SSN Config -->
+      <!-- Fonte do chat: Social Stream Ninja ou Instagram (Meta) -->
       <div class="config-card">
-        <h3>📡 Social Stream Ninja</h3>
-        <div class="form-group">
+        <h3>📡 Fonte do chat</h3>
+        <div class="source-switch" role="radiogroup" aria-label="Fonte do chat">
+          <label class="source-option">
+            <input type="radio" name="chatSource" value="ssn" checked>
+            <span>Social Stream Ninja</span>
+          </label>
+          <label class="source-option">
+            <input type="radio" name="chatSource" value="meta">
+            <span>Instagram (Meta)</span>
+          </label>
+        </div>
+
+        <div class="form-group" id="ssnFields">
           <label for="ssnSessionId">Session ID</label>
           <div class="input-row">
             <input type="text" id="ssnSessionId" placeholder="Cole seu Session ID aqui..." autocomplete="off">
             <button class="btn btn-primary" id="btnConnectSSN">Conectar</button>
           </div>
           <p class="hint">Encontre na URL do dock.html: <code>?session=SEU_ID</code></p>
+        </div>
+
+        <div class="form-group hidden" id="metaFields">
+          <label for="metaCredentialsPath">Credenciais do banco (JSON)</label>
+          <div class="input-row">
+            <input type="text" id="metaCredentialsPath" placeholder="credentials/mysql.json" value="credentials/mysql.json" autocomplete="off">
+            <button class="btn btn-primary" id="btnConnectMeta">Conectar</button>
+          </div>
+          <p class="hint">Lê os comentários da live gravados pelo sistema da loja (webhooks da Meta). <span id="metaLiveInfo">Nenhuma live em andamento.</span></p>
         </div>
       </div>
 
@@ -173,7 +193,7 @@
         </div>
         <div class="chat-feed" id="chatFeed">
           <div class="chat-empty">
-            <p>Conecte ao Social Stream Ninja para ver o chat</p>
+            <p>Conecte a fonte do chat (Social Stream Ninja ou Instagram) para ver as mensagens</p>
           </div>
         </div>
       </section>

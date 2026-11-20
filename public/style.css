@@ -366,6 +366,34 @@ body::before {
 
 .input-row input { flex: 1; }
 
+.hidden { display: none !important; }
+
+/* Escolha da fonte do chat */
+.source-switch {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.source-option {
+  flex: 1;
+  min-width: 140px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.source-option:has(input:checked) {
+  border-color: var(--accent-blue);
+  background: rgba(91, 141, 239, 0.12);
+}
+
 .hint {
   font-size: 0.72rem;
   color: var(--text-muted);
