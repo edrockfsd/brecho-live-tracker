@@ -6,3 +6,6 @@ credentials/*.json
 # Build and archives
 *.exe
 *.rar
+
+# Backups locais
+_backup/

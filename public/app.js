@@ -4,7 +4,9 @@
 
 // ─── State ──────────────────────────────────────────
 let ws = null;
-let isSSNConnected = false;
+let isSSNConnected = false; // fonte do chat conectada (SSN ou Meta)
+let chatSource = 'ssn';      // fonte escolhida na tela: 'ssn' | 'meta'
+let connectedSource = null;  // fonte conectada no servidor
 let isSheetsConnected = false;
 let isTracking = false;
 let activeCode = null;
@@ -22,6 +24,13 @@ const els = {
   configPanel: $('#configPanel'),
   ssnSessionId: $('#ssnSessionId'),
   btnConnectSSN: $('#btnConnectSSN'),
+  sourceRadios: $$('input[name="chatSource"]'),
+  ssnFields: $('#ssnFields'),
+  metaFields: $('#metaFields'),
+  metaCredentialsPath: $('#metaCredentialsPath'),
+  btnConnectMeta: $('#btnConnectMeta'),
+  metaLiveInfo: $('#metaLiveInfo'),
+  chatSourceLabel: $('#chatSourceLabel'),
   sheetsUrl: $('#sheetsUrl'),
   credentialsPath: $('#credentialsPath'),
   btnConnectSheets: $('#btnConnectSheets'),
@@ -49,6 +58,7 @@ const els = {
   // Chat
   chatFeed: $('#chatFeed'),
   chatCount: $('#chatCount'),
+  btnExportChat: $('#btnExportChat'),
 
   // History
   historyTableBody: $('#historyTableBody'),
@@ -101,6 +111,10 @@ function handleMessage(data) {
       handleSSNStatus(data);
       break;
 
+    case 'meta_live':
+      handleMetaLive(data);
+      break;
+
     case 'sheets_status':
       handleSheetsStatus(data);
       break;
@@ -132,6 +146,10 @@ function handleMessage(data) {
     case 'csv_data':
       downloadCSV(data.csv);
       break;
+
+    case 'chat_data':
+      downloadChat(data.text, data.count);
+      break;
   }
 }
 
@@ -143,13 +161,26 @@ function handleInitState(data) {
   currentMatches = data.currentMatches || [];
   history = data.history || [];
 
+  // Total de mensagens já registradas no servidor (sobrevive ao recarregar a página)
+  chatMessageCount = data.chatCount || 0;
+  els.chatCount.textContent = chatMessageCount;
+
   // Restore session ID
   if (data.ssnSessionId) {
     els.ssnSessionId.value = data.ssnSessionId;
   }
+  if (data.metaCredentialsPath) {
+    els.metaCredentialsPath.value = data.metaCredentialsPath;
+  }
 
   // Load saved config
   loadSavedConfig();
+
+  // Fonte já conectada no servidor tem prioridade sobre a salva no navegador
+  connectedSource = data.chatSource || null;
+  if (connectedSource) setChatSource(connectedSource);
+  updateConnectButtons();
+  updateMetaLiveInfo(!!data.metaLive);
 
   updateSSNStatusUI();
   updateSheetsStatusUI();
@@ -167,22 +198,59 @@ function handleInitState(data) {
   updateTrackingUI();
 }
 
-// ─── SSN Status ─────────────────────────────────────
+// ─── Fonte do chat (SSN ou Instagram/Meta) ──────────
+const SOURCE_NAMES = { ssn: 'Social Stream Ninja', meta: 'Instagram (Meta)' };
+
+function setChatSource(source) {
+  chatSource = source === 'meta' ? 'meta' : 'ssn';
+  els.sourceRadios.forEach(r => { r.checked = r.value === chatSource; });
+  els.ssnFields.classList.toggle('hidden', chatSource !== 'ssn');
+  els.metaFields.classList.toggle('hidden', chatSource !== 'meta');
+  els.chatSourceLabel.textContent = chatSource === 'meta' ? 'Meta' : 'SSN';
+}
+
+function updateConnectButtons() {
+  const ssnOn = isSSNConnected && connectedSource === 'ssn';
+  const metaOn = connectedSource === 'meta';
+  els.btnConnectSSN.textContent = ssnOn ? 'Desconectar' : 'Conectar';
+  els.btnConnectSSN.classList.toggle('btn-connect-active', ssnOn);
+  els.btnConnectMeta.textContent = metaOn ? 'Desconectar' : 'Conectar';
+  els.btnConnectMeta.classList.toggle('btn-connect-active', metaOn);
+}
+
 function handleSSNStatus(data) {
-  isSSNConnected = data.connected;
-  updateSSNStatusUI();
+  const source = data.source || 'ssn';
+  const nome = SOURCE_NAMES[source];
+  const eraConectado = isSSNConnected && connectedSource === source;
 
   if (data.connected) {
-    showToast('Social Stream Ninja conectado!', 'success');
-    els.btnConnectSSN.textContent = 'Desconectar';
-    els.btnConnectSSN.classList.add('btn-connect-active');
+    connectedSource = source;
+    isSSNConnected = true;
+    setChatSource(source);
+    if (!eraConectado) showToast(`${nome} conectado!`, 'success');
   } else {
-    els.btnConnectSSN.textContent = 'Conectar';
-    els.btnConnectSSN.classList.remove('btn-connect-active');
-    if (data.error) {
-      showToast(`Erro SSN: ${data.error}`, 'error');
-    }
+    // Instagram (Meta) com erro de leitura continua ligado e tenta de novo sozinho
+    const continuaTentando = source === 'meta' && connectedSource === 'meta' && data.error && !data.fatal;
+    if (connectedSource === source && !continuaTentando) connectedSource = null;
+    if (connectedSource === null || connectedSource === source) isSSNConnected = false;
+    if (data.error) showToast(`Erro ${nome}: ${data.error}`, 'error');
   }
+
+  updateSSNStatusUI();
+  updateConnectButtons();
+}
+
+function handleMetaLive(data) {
+  updateMetaLiveInfo(data.live);
+  if (data.live) {
+    showToast('Live do Instagram detectada! Lendo os comentários.', 'success');
+  } else {
+    showToast('Nenhuma live do Instagram em andamento.', 'info');
+  }
+}
+
+function updateMetaLiveInfo(live) {
+  els.metaLiveInfo.textContent = live ? '🔴 Live em andamento.' : 'Nenhuma live em andamento.';
 }
 
 function updateSSNStatusUI() {
@@ -401,9 +469,28 @@ els.btnToggleConfig.addEventListener('click', () => {
   els.configPanel.classList.toggle('collapsed');
 });
 
+// Escolha da fonte do chat
+els.sourceRadios.forEach(radio => {
+  radio.addEventListener('change', () => {
+    setChatSource(radio.value);
+    saveConfig();
+  });
+});
+
+// Connect Instagram (Meta) via banco
+els.btnConnectMeta.addEventListener('click', () => {
+  if (connectedSource === 'meta') {
+    send({ action: 'disconnect_meta' });
+  } else {
+    const credentialsPath = els.metaCredentialsPath.value.trim() || 'credentials/mysql.json';
+    saveConfig();
+    send({ action: 'connect_meta', credentialsPath });
+  }
+});
+
 // Connect SSN
 els.btnConnectSSN.addEventListener('click', () => {
-  if (isSSNConnected) {
+  if (isSSNConnected && connectedSource === 'ssn') {
     send({ action: 'disconnect_ssn' });
   } else {
     const sessionId = els.ssnSessionId.value.trim();
@@ -453,17 +540,17 @@ els.inputCode.addEventListener('keydown', (e) => {
   }
 });
 
-// Tab from code to description
+// Enter on description moves to value
 els.inputDescription.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     els.inputValue.focus();
   }
 });
 
-// Enter on value triggers track
+// Enter on value moves to code (last field)
 els.inputValue.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !isTracking) {
-    startTracking();
+  if (e.key === 'Enter') {
+    els.inputCode.focus();
   }
 });
 
@@ -490,6 +577,7 @@ function startTracking() {
     els.inputCode.value = '';
     els.inputDescription.value = '';
     els.inputValue.value = '';
+    els.inputDescription.focus();
   }, 100);
 }
 
@@ -505,6 +593,11 @@ document.addEventListener('click', (e) => {
 // Export CSV
 els.btnExportCSV.addEventListener('click', () => {
   send({ action: 'export_csv' });
+});
+
+// Export chat (arquivo com todo o chat da live)
+els.btnExportChat.addEventListener('click', () => {
+  send({ action: 'export_chat' });
 });
 
 // Copy to clipboard
@@ -563,6 +656,28 @@ function downloadCSV(csvContent) {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
   showToast('CSV exportado com sucesso!', 'success');
+}
+
+function downloadChat(text, count) {
+  if (!count) {
+    showToast('Nenhuma mensagem de chat registrada ainda', 'error');
+    return;
+  }
+
+  // BOM para o Bloco de Notas/Excel reconhecerem acentos e emojis (UTF-8)
+  const blob = new Blob(['\ufeff' + text], { type: 'text/plain;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const now = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  const stamp = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}_${p(now.getHours())}h${p(now.getMinutes())}`;
+  a.download = `chat_live_${stamp}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast(`Chat exportado: ${count} mensagens`, 'success');
 }
 
 function generateClipboardData() {
@@ -629,6 +744,8 @@ function playNotificationSound() {
 function saveConfig() {
   const config = {
     ssnSessionId: els.ssnSessionId.value,
+    chatSource,
+    metaCredentialsPath: els.metaCredentialsPath.value,
     sheetsUrl: els.sheetsUrl.value,
     credentialsPath: els.credentialsPath.value,
   };
@@ -641,6 +758,10 @@ function loadSavedConfig() {
     if (saved.ssnSessionId && !els.ssnSessionId.value) {
       els.ssnSessionId.value = saved.ssnSessionId;
     }
+    if (saved.metaCredentialsPath) {
+      els.metaCredentialsPath.value = saved.metaCredentialsPath;
+    }
+    setChatSource(saved.chatSource || 'ssn');
     if (saved.sheetsUrl && !els.sheetsUrl.value) {
       els.sheetsUrl.value = saved.sheetsUrl;
     }

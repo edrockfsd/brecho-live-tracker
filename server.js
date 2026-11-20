@@ -4,6 +4,7 @@ const WebSocket = require('ws');
 const path = require('path');
 const fs = require('fs');
 const { google } = require('googleapis');
+const mysql = require('mysql2/promise');
 
 const app = express();
 const server = http.createServer(app);
@@ -16,6 +17,7 @@ app.use(express.json());
 // ─── State ──────────────────────────────────────────────
 let ssnSocket = null;
 let ssnSessionId = null;
+let chatSource = null; // 'ssn' | 'meta' (fonte conectada no momento)
 let activeCode = null;
 let activePiece = null; // { code, description, value }
 let currentMatches = []; // [{ nick, timestamp }]
@@ -41,6 +43,10 @@ function addToMessageBuffer(entry) {
     messageBuffer = messageBuffer.slice(-MESSAGE_BUFFER_MAX);
   }
 }
+
+// Registro completo do chat (todas as mensagens desde que o app foi aberto),
+// usado para gerar o arquivo de chat da live
+let chatLog = []; // [{ nick, message, timestamp }]
 
 // Varre o buffer em busca de matches retroativos para o código dado
 function findRetroactiveMatches(code) {
@@ -199,11 +205,70 @@ function columnLetter(index) {
   return letter;
 }
 
+// ─── Processamento comum das mensagens do chat ──────────
+// Usado pelas duas fontes (Social Stream Ninja e Instagram/Meta via banco).
+// opts.live = false: mensagem antiga (carga inicial da live). Entra no registro do
+// chat e na tela, mas não no buffer retroativo nem no rastreio do código atual.
+function processChatMessage({ nick, message, timestamp, avatar = null, platform = 'unknown' }, opts = {}) {
+  const live = opts.live !== false;
+  const chatName = nick;
+  const chatMessage = (message || '').trim();
+
+  if (live) {
+    // Armazena no buffer para possível match retroativo
+    addToMessageBuffer({ nick: chatName, message: chatMessage, timestamp, avatar });
+  }
+
+  // Armazena no registro completo do chat (para exportação)
+  chatLog.push({ nick: chatName, message: chatMessage, timestamp });
+
+  if (live) console.log(`💬 [${chatName}]: "${chatMessage}"`);
+
+  // Forward to frontend chat monitor
+  broadcastToClients({
+    type: 'chat_message',
+    nick: chatName,
+    message: chatMessage,
+    platform,
+    timestamp,
+    avatar,
+  });
+
+  // Check if message matches active code EXACTLY
+  if (live && activeCode && chatMessage === activeCode) {
+    // Check if this nick already registered for this code
+    const alreadyRegistered = currentMatches.some(m => m.nick.toLowerCase() === chatName.toLowerCase());
+
+    if (!alreadyRegistered) {
+      const entry = { nick: chatName, timestamp, avatar };
+      currentMatches.push(entry);
+
+      const position = currentMatches.length; // 1 = buyer, 2+ = queue
+
+      console.log(`🎯 Match! ${chatName} → posição ${position} para código ${activeCode}`);
+
+      broadcastToClients({
+        type: 'code_match',
+        nick: chatName,
+        position,
+        timestamp,
+        avatar,
+        code: activeCode,
+      });
+
+      // Update Google Sheets in real-time
+      updateCurrentPieceInSheet();
+    }
+  }
+}
+
 // ─── Social Stream Ninja WebSocket ──────────────────────
 
 let ssnPingInterval = null;
 
 function connectToSSN(sessionId) {
+  disconnectFromMeta(); // só uma fonte por vez
+  chatSource = 'ssn';
   if (ssnSocket) {
     ssnSocket.close();
     ssnSocket = null;
@@ -221,7 +286,7 @@ function connectToSSN(sessionId) {
 
   ssnSocket.on('open', () => {
     console.log('✅ Conectado ao Social Stream Ninja (Canal 4)');
-    broadcastToClients({ type: 'ssn_status', connected: true });
+    broadcastToClients({ type: 'ssn_status', connected: true, source: 'ssn' });
 
     // Keepalive ping every 25 seconds to prevent idle disconnect
     ssnPingInterval = setInterval(() => {
@@ -243,53 +308,13 @@ function connectToSSN(sessionId) {
         return;
       }
 
-      const chatName = data.chatname;
-      const chatMessage = (data.chatmessage || '').trim();
-      const timestamp = Date.now();
-
-      // Armazena no buffer para possível match retroativo
-      addToMessageBuffer({ nick: chatName, message: chatMessage, timestamp, avatar: data.chatimg || null });
-
-      console.log(`💬 [${chatName}]: "${chatMessage}"`);
-
-      // Forward to frontend chat monitor
-      broadcastToClients({
-        type: 'chat_message',
-        nick: chatName,
-        message: chatMessage,
-        platform: data.type || 'unknown',
-        timestamp,
+      processChatMessage({
+        nick: data.chatname,
+        message: data.chatmessage || '',
+        timestamp: Date.now(),
         avatar: data.chatimg || null,
+        platform: data.type || 'unknown',
       });
-
-      // Check if message matches active code EXACTLY
-      if (activeCode && chatMessage === activeCode) {
-        // Check if this nick already registered for this code
-        const alreadyRegistered =
-          (currentMatches.length > 0 && currentMatches[0].nick.toLowerCase() === chatName.toLowerCase()) ||
-          currentMatches.some(m => m.nick.toLowerCase() === chatName.toLowerCase());
-
-        if (!alreadyRegistered) {
-          const entry = { nick: chatName, timestamp, avatar: data.chatimg || null };
-          currentMatches.push(entry);
-
-          const position = currentMatches.length; // 1 = buyer, 2+ = queue
-
-          console.log(`🎯 Match! ${chatName} → posição ${position} para código ${activeCode}`);
-
-          broadcastToClients({
-            type: 'code_match',
-            nick: chatName,
-            position,
-            timestamp,
-            avatar: data.chatimg || null,
-            code: activeCode,
-          });
-
-          // Update Google Sheets in real-time
-          updateCurrentPieceInSheet();
-        }
-      }
     } catch (err) {
       // Ignore non-JSON messages
     }
@@ -299,7 +324,7 @@ function connectToSSN(sessionId) {
     clearInterval(ssnPingInterval);
     ssnPingInterval = null;
     console.log(`❌ Desconectado do SSN (code: ${code}, reason: ${reason.toString() || 'sem motivo'})`);
-    broadcastToClients({ type: 'ssn_status', connected: false });
+    broadcastToClients({ type: 'ssn_status', connected: false, source: 'ssn' });
     // Reconnect after 3 seconds
     if (ssnSessionId) {
       setTimeout(() => {
@@ -310,17 +335,169 @@ function connectToSSN(sessionId) {
 
   ssnSocket.on('error', (err) => {
     console.error('❌ Erro SSN:', err.message);
-    broadcastToClients({ type: 'ssn_status', connected: false, error: err.message });
+    broadcastToClients({ type: 'ssn_status', connected: false, source: 'ssn', error: err.message });
   });
 }
 
 function disconnectFromSSN() {
+  const estavaConectado = !!ssnSocket || !!ssnSessionId;
   ssnSessionId = null;
   if (ssnSocket) {
     ssnSocket.close();
     ssnSocket = null;
   }
-  broadcastToClients({ type: 'ssn_status', connected: false });
+  if (chatSource === 'ssn') chatSource = null;
+  if (estavaConectado) broadcastToClients({ type: 'ssn_status', connected: false, source: 'ssn' });
+}
+
+// ─── Instagram (Meta) via banco do ABrechozeiraApp ─────
+// O ABrechozeiraApp recebe os comentários da live pelos webhooks/API da Meta e grava
+// na tabela ComentarioLive. Aqui lemos essa tabela a cada 1 s, só da live em andamento
+// (LiveSession com Status = 'live' e sem EndedAt).
+
+const META_INTERVALO_MS = 1000;
+const META_LOTE = 500;
+
+let metaPool = null;
+let metaTimer = null;
+let metaCredentialsPath = null;
+let metaConnected = false;   // última consulta ao banco deu certo
+let metaLiveVideoId = null;  // live em andamento detectada no banco
+// Progresso por live: sobrevive a desconectar/reconectar, para não repetir comentários.
+const metaUltimoIdPorLive = new Map();
+
+function lerCredenciaisMySQL(credPath) {
+  const arquivo = path.resolve(credPath);
+  if (!fs.existsSync(arquivo)) {
+    throw new Error(`Arquivo de credenciais do banco não encontrado: ${arquivo}`);
+  }
+  const c = JSON.parse(fs.readFileSync(arquivo, 'utf8'));
+  for (const campo of ['host', 'user', 'password', 'database']) {
+    if (!c[campo]) throw new Error(`Campo "${campo}" faltando em ${credPath}`);
+  }
+  return c;
+}
+
+function setMetaConnected(conectado, extra = {}) {
+  if (metaConnected === conectado && !extra.error && !extra.force) return;
+  metaConnected = conectado;
+  broadcastToClients({ type: 'ssn_status', connected: conectado, source: 'meta', ...extra });
+}
+
+async function connectToMeta(credPath) {
+  disconnectFromSSN(); // só uma fonte por vez
+  await disconnectFromMeta();
+
+  const creds = lerCredenciaisMySQL(credPath);
+  metaCredentialsPath = credPath;
+  chatSource = 'meta';
+
+  metaPool = mysql.createPool({
+    host: creds.host,
+    port: Number(creds.port) || 3306,
+    user: creds.user,
+    password: creds.password,
+    database: creds.database,
+    connectionLimit: 2,
+    connectTimeout: 10000,
+    timezone: 'local',
+  });
+
+  // Testa a conexão antes de começar
+  await metaPool.query('SELECT 1');
+  console.log(`✅ Conectado ao banco (${creds.host}/${creds.database}) - fonte Instagram (Meta)`);
+  setMetaConnected(true, { force: true });
+
+  agendarPollMeta(0);
+}
+
+function agendarPollMeta(atraso) {
+  if (metaTimer) clearTimeout(metaTimer);
+  metaTimer = setTimeout(pollMeta, atraso);
+}
+
+async function pollMeta() {
+  metaTimer = null;
+  if (!metaPool || chatSource !== 'meta') return;
+
+  try {
+    const [lives] = await metaPool.query(
+      "SELECT LiveVideoId FROM LiveSession WHERE Status = 'live' AND EndedAt IS NULL ORDER BY Id DESC LIMIT 1"
+    );
+    const liveAtual = lives.length > 0 ? String(lives[0].LiveVideoId) : null;
+
+    if (liveAtual !== metaLiveVideoId) {
+      metaLiveVideoId = liveAtual;
+      if (liveAtual) {
+        console.log(`🔴 Live do Instagram detectada no banco: ${liveAtual}`);
+      } else {
+        console.log('⚪ Nenhuma live do Instagram em andamento no banco');
+      }
+      broadcastToClients({ type: 'meta_live', live: !!liveAtual, liveVideoId: liveAtual });
+    }
+
+    if (liveAtual) {
+      // Primeira leitura desta live: tudo o que já existe é "antigo" (não entra no rastreio).
+      const primeiraLeitura = !metaUltimoIdPorLive.has(liveAtual);
+      let ultimoId = metaUltimoIdPorLive.get(liveAtual) || 0;
+      let veioLoteCheio = true;
+
+      while (veioLoteCheio && metaPool) {
+        const [rows] = await metaPool.query(
+          'SELECT Id, Username, CommentText, CreatedAt FROM ComentarioLive WHERE LiveSessionId = ? AND Id > ? ORDER BY Id LIMIT ?',
+          [liveAtual, ultimoId, META_LOTE]
+        );
+
+        for (const r of rows) {
+          const criadoEm = r.CreatedAt instanceof Date ? r.CreatedAt.getTime() : Date.now();
+          processChatMessage(
+            {
+              nick: r.Username,
+              message: r.CommentText,
+              // Mensagem nova: hora de chegada (mesma base do buffer retroativo).
+              // Mensagem antiga: hora gravada no banco (só para exibição/exportação).
+              timestamp: primeiraLeitura ? criadoEm : Date.now(),
+              platform: 'instagram',
+            },
+            { live: !primeiraLeitura }
+          );
+          ultimoId = r.Id;
+        }
+
+        metaUltimoIdPorLive.set(liveAtual, ultimoId);
+        veioLoteCheio = rows.length === META_LOTE;
+        if (primeiraLeitura && rows.length > 0) {
+          console.log(`📥 ${rows.length} comentário(s) anteriores da live carregados`);
+        }
+      }
+    }
+
+    setMetaConnected(true);
+  } catch (err) {
+    console.error('❌ Erro ao ler comentários do banco:', err.message);
+    if (metaConnected) setMetaConnected(false, { error: err.message });
+  }
+
+  if (metaPool && chatSource === 'meta') agendarPollMeta(META_INTERVALO_MS);
+}
+
+async function disconnectFromMeta() {
+  if (metaTimer) {
+    clearTimeout(metaTimer);
+    metaTimer = null;
+  }
+  const estavaConectado = !!metaPool;
+  if (metaPool) {
+    const pool = metaPool;
+    metaPool = null;
+    try { await pool.end(); } catch (e) { /* ignora */ }
+  }
+  metaLiveVideoId = null;
+  if (chatSource === 'meta') chatSource = null;
+  if (estavaConectado) {
+    metaConnected = false;
+    broadcastToClients({ type: 'ssn_status', connected: false, source: 'meta' });
+  }
 }
 
 // ─── Piece tracking helpers ─────────────────────────────
@@ -416,7 +593,10 @@ wss.on('connection', (ws) => {
   // Send current state
   ws.send(JSON.stringify({
     type: 'init_state',
-    ssnConnected: ssnSocket && ssnSocket.readyState === WebSocket.OPEN,
+    ssnConnected: chatSource === 'meta' ? metaConnected : !!(ssnSocket && ssnSocket.readyState === WebSocket.OPEN),
+    chatSource,
+    metaCredentialsPath,
+    metaLive: !!metaLiveVideoId,
     sheetsConnected: !!sheetsClient,
     activeCode,
     activePiece,
@@ -424,6 +604,7 @@ wss.on('connection', (ws) => {
     history,
     ssnSessionId,
     spreadsheetId,
+    chatCount: chatLog.length,
   }));
 
   ws.on('message', async (rawMsg) => {
@@ -438,6 +619,22 @@ wss.on('connection', (ws) => {
 
         case 'disconnect_ssn': {
           disconnectFromSSN();
+          break;
+        }
+
+        case 'connect_meta': {
+          try {
+            await connectToMeta(msg.credentialsPath || 'credentials/mysql.json');
+          } catch (err) {
+            console.error('❌ Erro ao conectar no banco:', err.message);
+            await disconnectFromMeta();
+            ws.send(JSON.stringify({ type: 'ssn_status', connected: false, source: 'meta', error: err.message }));
+          }
+          break;
+        }
+
+        case 'disconnect_meta': {
+          await disconnectFromMeta();
           break;
         }
 
@@ -551,6 +748,15 @@ wss.on('connection', (ws) => {
           break;
         }
 
+        case 'export_chat': {
+          ws.send(JSON.stringify({
+            type: 'chat_data',
+            text: generateChatLog(),
+            count: chatLog.length,
+          }));
+          break;
+        }
+
         default:
           console.warn('⚠️ Ação desconhecida:', msg.action);
       }
@@ -605,6 +811,52 @@ function generateCSV() {
   }
 
   return rows.join('\n');
+}
+
+// ─── Chat Export ─────────────────────────────────────────
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+function formatDate(d) {
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
+function formatTime(d) {
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+// Gera o texto com todo o chat registrado (uma mensagem por linha)
+function generateChatLog() {
+  const now = new Date();
+  const lines = [
+    'Brechó Live Tracker - Chat da live',
+    `Gerado em: ${formatDate(now)} ${formatTime(now)}`,
+  ];
+
+  if (chatLog.length > 0) {
+    const first = new Date(chatLog[0].timestamp);
+    const last = new Date(chatLog[chatLog.length - 1].timestamp);
+    lines.push(`Período: ${formatDate(first)} ${formatTime(first)} até ${formatDate(last)} ${formatTime(last)}`);
+  }
+  lines.push(`Total de mensagens: ${chatLog.length}`);
+  lines.push('------------------------------------------------------------');
+
+  let currentDay = null;
+  for (const entry of chatLog) {
+    const d = new Date(entry.timestamp);
+    const day = formatDate(d);
+    // Marca a virada de dia (lives que passam da meia-noite)
+    if (day !== currentDay) {
+      lines.push(`--- ${day} ---`);
+      currentDay = day;
+    }
+    const message = String(entry.message).replace(/\s*[\r\n]+\s*/g, ' ');
+    lines.push(`[${formatTime(d)}] ${entry.nick}: ${message}`);
+  }
+
+  return lines.join('\r\n') + '\r\n';
 }
 
 // ─── Start Server ───────────────────────────────────────
