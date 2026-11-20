@@ -401,6 +401,10 @@ async function connectToMeta(credPath) {
     connectionLimit: 2,
     connectTimeout: 10000,
     timezone: 'local',
+    // IDs de live da Meta passam de 2^53: como número, o JavaScript arredonda o último dígito
+    // (ex.: ...357 virava ...356) e o app procurava os comentários na live errada.
+    supportBigNumbers: true,
+    bigNumberStrings: true,
   });
 
   // Testa a conexão antes de começar
@@ -479,7 +483,7 @@ async function pollMeta() {
 
   try {
     const [lives] = await metaPool.query(
-      "SELECT LiveVideoId FROM LiveSession WHERE Status = 'live' AND EndedAt IS NULL ORDER BY Id DESC LIMIT 1"
+      "SELECT CAST(LiveVideoId AS CHAR) AS LiveVideoId FROM LiveSession WHERE Status = 'live' AND EndedAt IS NULL ORDER BY Id DESC LIMIT 1"
     );
     const liveAtual = lives.length > 0 ? String(lives[0].LiveVideoId) : null;
 
